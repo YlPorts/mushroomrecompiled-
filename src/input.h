@@ -1,5 +1,5 @@
 #pragma once
-#include <windows.h>
+#include <wchar.h>
 #include <stdint.h>
 
 #define INPUT_UP       0x0001
@@ -34,6 +34,8 @@ int input_devices(InputDevice *out, int capacity);
 void input_select(const char *guid);
 const char *input_preferred(void);
 void input_update(void);
+/* Refresh controllers after the host has consumed SDL events. */
+void input_refresh(void);
 void input_configure(const int b[11]);
 void input_set_deadzone(int v);
 int input_deadzone(void);

@@ -1,0 +1,79 @@
+name: Android ARM64 Release
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: android-private-build
+    env:
+      SMB3_ROM_PATH: ${{ runner.temp }}/mushroom-private/game.nes
+      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/mushroom-private/release.jks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
+      - name: Require private inputs and persistent signing certificate
+        env:
+          ROM_DOWNLOAD_URL: ${{ secrets.ROM_DOWNLOAD_URL }}
+          ROM_ARCHIVE_PASSWORD: ${{ secrets.ROM_ARCHIVE_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 tools/ci_private_rom.py "$SMB3_ROM_PATH"
+          python3 - <<'PY'
+          import os, base64
+          from pathlib import Path
+          names=('ANDROID_KEYSTORE_BASE64','ANDROID_KEYSTORE_PASSWORD','ANDROID_KEY_ALIAS','ANDROID_KEY_PASSWORD')
+          if not all(os.environ.get(n) for n in names):
+              raise SystemExit('Missing persistent Release signing secrets. See docs/ANDROID.md; no debug-signed Release will be published.')
+          path=Path(os.environ['ANDROID_KEYSTORE_PATH'])
+          path.write_bytes(base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'],validate=True))
+          path.chmod(0o600)
+          PY
+      - name: Android toolchain
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.31.6'
+      - name: Host generator and real game regression tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libsdl2-dev
+          python3 tools/generate_android.py --rom "$SMB3_ROM_PATH"
+          cmake -S . -B build/verify -DCMAKE_BUILD_TYPE=Release -DSMB3_TEST_ROM="$SMB3_ROM_PATH" -DSMB3_CONTROLLER_TESTS=ON
+          cmake --build build/verify --parallel 4
+          ctest --test-dir build/verify --output-on-failure
+          node --test tests/rom.test.mjs
+          mkdir -p build/java-tests
+          javac -d build/java-tests android/app/src/main/java/org/mushroomrecompiled/TouchState.java android/app/src/main/java/org/mushroomrecompiled/RomValidator.java tests/android_host/TouchStateTest.java
+          java -cp build/java-tests org.mushroomrecompiled.TouchStateTest "$SMB3_ROM_PATH"
+      - name: Cross-compile and sign ARM64 Release
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 tools/prepare_android.py
+          cd android
+          ./gradlew --no-daemon -PandroidVersionCode="$((15000 + GITHUB_RUN_NUMBER))" :app:exportReleaseApk :app:assembleAndroidTest :app:lintRelease
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose ../build/android-release/MushroomRecompiled-Android-arm64.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MushroomRecompiled-Android-arm64
+          path: build/android-release/MushroomRecompiled-Android-arm64.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove private inputs and derived build intermediates
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/mushroom-private" generated build/verify android/app/.cxx android/app/build

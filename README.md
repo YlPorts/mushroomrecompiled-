@@ -2,6 +2,14 @@
 
 **The ROM is not included with the project or the ZIP.** Select your compatible copy from the menu. The full game has not yet been validated.
 
+## Android ARM64
+
+Native Android frontend with SDL2/OpenGL ES, the original cycle-accurate core,
+SAF ROM selection, multitouch controls, controller remapping, five save slots,
+NES audio and the existing 16:9 compositor. See [Android build and usage](docs/ANDROID.md)
+and [verification status](docs/ANDROID_TESTS.md). Android hardware validation and
+Galaxy A15 performance certification remain pending; 19:9 is not enabled.
+
 ## Widescreen and scene fixes — v1.5
 
 The downloadable version expands the scenery of horizontal stages to a 16:9 canvas without stretching tiles or sprites. The original HUD remains centered, with black bars on the sides. Select **Video > Aspect Ratio > 16:9**; new configurations already use this mode.
@@ -67,7 +75,7 @@ cd build
 .\smb3-ui-verify.exe
 ```
 
-Auxiliary inspection: `node tools/rom.mjs <ROM.nes> [extraction directory]`; parser tests: `node --test tests/rom.test.mjs`.
+Auxiliary inspection: `node tools/rom.mjs <ROM.nes>`; parser tests: `node --test tests/rom.test.mjs`.
 
 ## Credits and licenses
 

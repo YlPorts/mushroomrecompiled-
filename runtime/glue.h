@@ -22,6 +22,7 @@ extern "C" {
 bool     glue_load_rom(const char *path);
 bool     glue_load_rom_wide(const wchar_t *path);
 bool     glue_is_rom_loaded(void);
+void     glue_unload_rom(void);
 uint32_t glue_get_rom_crc32(void);
 void     glue_init(void);
 void     glue_reset(void);
@@ -47,6 +48,9 @@ uint64_t glue_frame_count(void);
 /* Save State */
 bool     glue_save_state(const wchar_t *path);
 bool     glue_load_state(const wchar_t *path);
+/* UTF-8 paths on Android/POSIX. The wide API remains for the Windows UI. */
+bool     glue_save_state_utf8(const char *path);
+bool     glue_load_state_utf8(const char *path);
 
 #ifdef __cplusplus
 }

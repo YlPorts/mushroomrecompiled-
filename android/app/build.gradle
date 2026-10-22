@@ -1,0 +1,81 @@
+plugins { id 'com.android.application' }
+
+def repoRoot = rootProject.projectDir.parentFile
+def privateRom = providers.gradleProperty('romPath').orElse(providers.environmentVariable('SMB3_ROM_PATH'))
+def releaseStore = providers.environmentVariable('ANDROID_KEYSTORE_PATH')
+
+android {
+    namespace 'org.mushroomrecompiled'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+    ndkVersion '28.2.13676358'
+    defaultConfig {
+        applicationId 'org.mushroomrecompiled'
+        minSdk 26
+        targetSdk 36
+        versionCode providers.gradleProperty('androidVersionCode').getOrElse('15001').toInteger()
+        versionName '1.5.0-android.1'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        ndk { abiFilters 'arm64-v8a' }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared', '-DSDL_SHARED=ON', '-DSDL_STATIC=OFF', '-DBUILD_TESTING=OFF'
+                targets 'main', 'SDL2'
+            }
+        }
+    }
+    signingConfigs {
+        release {
+            if (releaseStore.isPresent()) {
+                storeFile file(releaseStore.get())
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            // An installable Release needs a persistent signing key, never a debug fallback.
+            if (releaseStore.isPresent()) signingConfig signingConfigs.release
+        }
+    }
+    externalNativeBuild { cmake { path file('../../CMakeLists.txt'); version '3.31.6' } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packaging { jniLibs { useLegacyPackaging = false } }
+    androidResources { noCompress += ['txt'] }
+}
+
+dependencies {
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}
+
+def prepareSdl = tasks.register('prepareSdl', Exec) {
+    workingDir repoRoot
+    commandLine 'python3', 'tools/prepare_android.py'
+}
+def generateGame = tasks.register('generateGame', Exec) {
+    workingDir repoRoot
+    doFirst {
+        if (!privateRom.isPresent()) throw new GradleException('Missing private ROM: set SMB3_ROM_PATH or -PromPath=/path/to/compatible.nes. No fake APK will be produced.')
+        commandLine 'python3', 'tools/generate_android.py', '--rom', privateRom.get()
+    }
+}
+tasks.configureEach { task ->
+    if (task.name == 'preBuild' || task.name.startsWith('configureCMake') || task.name.startsWith('buildCMake')) {
+        task.dependsOn prepareSdl, generateGame
+    }
+    if (task.name == 'validateSigningRelease') {
+        task.doFirst {
+            if (!releaseStore.isPresent()) throw new GradleException('Release signing required: set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD. Keep this certificate for updates.')
+        }
+    }
+}
+tasks.register('exportReleaseApk', Copy) {
+    dependsOn 'assembleRelease'
+    from layout.buildDirectory.file('outputs/apk/release/app-release.apk')
+    into new File(repoRoot, 'build/android-release')
+    rename { 'MushroomRecompiled-Android-arm64.apk' }
+}
