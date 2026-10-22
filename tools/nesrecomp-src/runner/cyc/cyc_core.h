@@ -239,6 +239,9 @@ uint64_t cyc_mem_state_hash(void);
 /* Hash of the hardware internals; comparable only between runs of the same
  * implementation (cyc_hw_name). */
 uint64_t cyc_hw_state_hash(void);
+/* Same cycle PPU, with stable-span branch elimination on/off. Hosts may use
+ * the general path to verify complete hardware state equivalence. */
+void cyc_set_ppu_render_spans(bool enabled);
 /* The hashed hardware fields by name, one per line, to a FILE *. */
 void cyc_hw_state_dump(void *file);
 /* What cyc_mem_state_hash covers, as hex lines, to a FILE * (cyc_mem_dump in

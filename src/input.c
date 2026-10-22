@@ -1,6 +1,8 @@
 #include "input.h"
 #include <SDL.h>
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include <string.h>
 #include <stdio.h>
 
@@ -12,6 +14,18 @@ static wchar_t current_name[180] = L"Nenhum controle conectado";
 static int bindings[11] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 static int deadzone = 25;
 static int initialized = 0;
+
+static void utf8_name(const char *s, wchar_t *out, size_t cap) {
+#ifdef _WIN32
+    MultiByteToWideChar(CP_UTF8,0,s,-1,out,(int)cap);
+#else
+    /* SDL handles conversion without relying on Android's C locale. */
+    char *wide=SDL_iconv_string("WCHAR_T","UTF-8",s,strlen(s)+1);
+    if (wide) { wcsncpy(out,(wchar_t *)wide,cap-1); SDL_free(wide); }
+    else { wcsncpy(out,L"Controller",cap-1); }
+#endif
+    out[cap-1]=0;
+}
 
 int input_init(void) {
     if (initialized) return 1;
@@ -64,7 +78,7 @@ int input_devices(InputDevice *out, int capacity) {
         snprintf(d->key, sizeof d->key, "%s", device_path&&device_path[0]?device_path:d->guid);
         const char *name = d->mapped ? SDL_GameControllerNameForIndex(i) : SDL_JoystickNameForIndex(i);
         if (!name) name = "Controle Conectado";
-        MultiByteToWideChar(CP_UTF8, 0, name, -1, d->name, 180);
+        utf8_name(name,d->name,180);
         d->name[179] = 0;
     }
     return count;
@@ -83,6 +97,12 @@ void input_update(void) {
     if (!initialized) return;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {}
+    input_refresh();
+}
+
+void input_refresh(void) {
+    if (!initialized) return;
+    SDL_GameControllerUpdate();
 
     if (joystick && !SDL_JoystickGetAttached(joystick)) {
         disconnect();
@@ -150,10 +170,10 @@ InputState input_read(void) {
     if (controller) {
         x = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTX);
         y = SDL_GameControllerGetAxis(controller, SDL_CONTROLLER_AXIS_LEFTY);
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP))    s.pad |= INPUT_UP;
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN))  s.pad |= INPUT_DOWN;
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT))  s.pad |= INPUT_LEFT;
-        if (SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) s.pad |= INPUT_RIGHT;
+        if (bindings[4]<0 && SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_UP))    s.pad |= INPUT_UP;
+        if (bindings[5]<0 && SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN))  s.pad |= INPUT_DOWN;
+        if (bindings[6]<0 && SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT))  s.pad |= INPUT_LEFT;
+        if (bindings[7]<0 && SDL_GameControllerGetButton(controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) s.pad |= INPUT_RIGHT;
     } else {
         if (SDL_JoystickNumAxes(joystick) > 0) x = SDL_JoystickGetAxis(joystick, 0);
         if (SDL_JoystickNumAxes(joystick) > 1) y = SDL_JoystickGetAxis(joystick, 1);

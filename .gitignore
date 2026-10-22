@@ -26,6 +26,11 @@ cycle-misses.txt
 *.zip
 /tools/*
 !/tools/run-hidden.ps1
+!/tools/rom.mjs
+!/tools/validate_rom.py
+!/tools/generate_android.py
+!/tools/prepare_android.py
+!/tools/ci_private_rom.py
 !/tools/nesrecomp-src/
 /tools/nesrecomp-src/*
 !/tools/nesrecomp-src/common/
@@ -45,3 +50,20 @@ wide-output-*.png
 wide-reference-*.png
 
 scene-*.png
+
+# Android local dependencies, signatures and private outputs
+/android/.gradle/
+/android/.cxx/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/app/src/main/java/org/libsdl/
+/android/app/src/main/assets/gamecontrollerdb.txt
+/android/app/src/main/assets/underplay.png
+/android/app/src/main/assets/licenses/
+/android/local.properties
+*.jks
+*.keystore
+*.apk
+*.aab
+__pycache__/

@@ -183,6 +183,12 @@ void apu_audio_enable(bool on, int sample_rate)
 {
     audio.on = on && sample_rate > 0;
     if (!audio.on) return;
+    /* Mushroom Android: an output restart must not replay queued samples or
+     * inherit the analog filter history from the previous game/session. This
+     * is host PCM state; the guest APU registers and clocks are untouched. */
+    audio.head=audio.tail=0;
+    audio.hp90_prev_in=audio.hp90_prev_out=audio.hp440_prev_in=audio.hp440_prev_out=audio.lp_out=0;
+    audio.hp37_prev_in=audio.hp37_prev_out=0;
     const double cpu_rate = cyc_cpu_hz();
     audio.cycles_per_sample = cpu_rate / sample_rate;
     audio.phase = audio.acc = 0;
