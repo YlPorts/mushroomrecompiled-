@@ -991,6 +991,13 @@ HW_ALWAYS_INLINE void half_dot_status(void)
 
 enum { DOT_UNKNOWN, DOT_BLANK, DOT_GENERAL, DOT_RENDER };
 static uint8_t dot_kind;
+#ifndef NESRECOMP_LLE_RENDER_SPANS
+#define NESRECOMP_LLE_RENDER_SPANS 0
+#endif
+/* Mushroom Android optimization: stable spans also retain the original LLE
+ * shift registers. They still execute every dot, bus fetch and IRQ edge. */
+static bool render_spans_enabled = NESRECOMP_PPU_HLE || NESRECOMP_LLE_RENDER_SPANS;
+void cyc_set_ppu_render_spans(bool enabled) {render_spans_enabled=enabled;dot_kind=DOT_UNKNOWN;}
 
 static bool is_blank(void)
 {
@@ -1225,7 +1232,6 @@ static void general_half_dot(void)
     data_sm_half();
 }
 
-#if NESRECOMP_PPU_HLE
 /* A native rendering span owns the stable interior of a visible scanline.
  * Register access invalidates dot_kind, so no delayed CPU write/read or data
  * port transaction is hidden by this classification. Edge dots retain the
@@ -1279,8 +1285,15 @@ static void render_span_dot(void)
 
 static void render_span_half_dot(void)
 {
+#if NESRECOMP_PPU_HLE
     ppu.bg_pixels = (ppu.bg_pixels << 2) | 2u;
     ppu.attr_pixels = (ppu.attr_pixels << 2) | ppu.attr_latch;
+#else
+    ppu.bg_lo = (uint16_t)(ppu.bg_lo << 1);
+    ppu.bg_hi = (uint16_t)(ppu.bg_hi << 1 | 1);
+    ppu.attr_lo = (uint16_t)(ppu.attr_lo << 1 | (ppu.attr_latch & 1));
+    ppu.attr_hi = (uint16_t)(ppu.attr_hi << 1 | ((ppu.attr_latch >> 1) & 1));
+#endif
 #ifdef NESRECOMP_CYCLE_HDPACK
     cyc_hdpack_bg_shift();
 #endif
@@ -1305,7 +1318,6 @@ static void render_span_half_dot(void)
     ppu.ale = 0;
     ppu.wr = 0;
 }
-#endif
 /* A general dot can only lead to a blank one once rendering is off: while it
  * is on, the classification stays until a register access. */
 /* A12-A13 are direct pins on the cartridge connector, so a mapper that
@@ -1324,16 +1336,12 @@ void ppu_dot(void)
     if (dot_kind == DOT_UNKNOWN) dot_kind = is_blank() ? DOT_BLANK : DOT_GENERAL;
     if (dot_kind == DOT_BLANK) {
         blank_dot();
-#if NESRECOMP_PPU_HLE
     } else if (dot_kind == DOT_RENDER && ppu.dot < 253) {
         render_span_dot();
-#endif
     } else {
         general_dot();
         if (!rendering()) dot_kind = DOT_UNKNOWN;
-#if NESRECOMP_PPU_HLE
-        else dot_kind = render_span_ready() ? DOT_RENDER : DOT_GENERAL;
-#endif
+        else dot_kind = render_spans_enabled && render_span_ready() ? DOT_RENDER : DOT_GENERAL;
     }
     hw_cart_ppu_addr(ppu.vbus);
 }
@@ -1343,16 +1351,12 @@ void ppu_half_dot(void)
     if (dot_kind == DOT_UNKNOWN) dot_kind = is_blank() ? DOT_BLANK : DOT_GENERAL;
     if (dot_kind == DOT_BLANK) {
         blank_half_dot();
-#if NESRECOMP_PPU_HLE
     } else if (dot_kind == DOT_RENDER) {
         render_span_half_dot();
-#endif
     } else {
         general_half_dot();
         if (!rendering()) dot_kind = DOT_UNKNOWN;
-#if NESRECOMP_PPU_HLE
-        else if (render_span_ready()) dot_kind = DOT_RENDER;
-#endif
+        else if (render_spans_enabled && render_span_ready()) dot_kind = DOT_RENDER;
     }
 }
 

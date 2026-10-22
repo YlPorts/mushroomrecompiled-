@@ -10,6 +10,41 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION = "2.30.12"
 SHA256 = "ac356ea55e8b9dd0b2d1fa27da40ef7e238267ccf9324704850d5d47375b48ea"
 
+def prepare_low_latency_audio(archive, source):
+    """Patch verified upstream bytes, rather than repeatedly patching a worktree.
+
+    SDL 2.30's AAudio backend leaves performance mode and the system buffer at
+    their defaults. All three functions below are present since API 26.
+    """
+    paths = ("src/audio/aaudio/SDL_aaudiofuncs.h", "src/audio/aaudio/SDL_aaudio.c")
+    with tarfile.open(archive) as tar:
+        originals = [tar.extractfile(f"SDL2-{VERSION}/{p}").read().decode() for p in paths]
+    functions, code = originals
+    for function in ("AAudioStreamBuilder_setPerformanceMode", "AAudioStream_setBufferSizeInFrames", "AAudioStream_getFramesPerBurst"):
+        lines = functions.splitlines(keepends=True)
+        matches = [i for i,line in enumerate(lines) if function + "," in line]
+        if len(matches) != 1 or "SDL_PROC_UNUSED(" not in lines[matches[0]]:
+            raise RuntimeError("Pinned SDL AAudio function patch no longer matches")
+        lines[matches[0]] = lines[matches[0]].replace("SDL_PROC_UNUSED(", "SDL_PROC(")
+        functions = "".join(lines)
+    marker = "    ctx.AAudioStreamBuilder_setErrorCallback(ctx.builder, aaudio_errorCallback, "
+    if code.count(marker) != 2:
+        raise RuntimeError("Pinned SDL AAudio builder patch no longer matches")
+    code = code.replace(marker, "    /* Mushroom Android: request the native low-latency path. */\n"
+        "    ctx.AAudioStreamBuilder_setPerformanceMode(ctx.builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);\n" + marker)
+    for device in ("private", "hidden"):
+        marker = f"    res = ctx.AAudioStream_requestStart({device}->stream);"
+        if code.count(marker) != 1:
+            raise RuntimeError("Pinned SDL AAudio burst patch no longer matches")
+        code = code.replace(marker,
+            f"    /* Mushroom Android: two hardware bursts; retain the device default if refused. */\n"
+            f"    {{\n        const int32_t burst = ctx.AAudioStream_getFramesPerBurst({device}->stream);\n"
+            f"        if (burst > 0) ctx.AAudioStream_setBufferSizeInFrames({device}->stream, burst * 2);\n    }}\n" + marker)
+    for path, text in zip(paths, (functions, code)):
+        target = source / path
+        if target.read_text() != text:
+            target.write_text(text)
+
 def main():
     deps = ROOT / "build/dependencies"
     deps.mkdir(parents=True, exist_ok=True)
@@ -22,6 +57,7 @@ def main():
     if not source.is_dir():
         with tarfile.open(archive) as tar:
             tar.extractall(deps, filter="data")
+    prepare_low_latency_audio(archive, source)
     app = ROOT / "android/app/src/main"
     shutil.copytree(source / "android-project/app/src/main/java/org/libsdl", app / "java/org/libsdl", dirs_exist_ok=True)
     # Android 14+ requires explicit receiver export flags in SDL's Java glue.

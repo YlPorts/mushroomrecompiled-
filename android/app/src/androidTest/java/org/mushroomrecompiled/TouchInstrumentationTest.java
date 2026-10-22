@@ -36,6 +36,10 @@ public final class TouchInstrumentationTest {
             send(view,MotionEvent.ACTION_MOVE,new int[]{21},new float[][]{{60,425}});assertEquals(6,NativeBridge.touchMask());
             send(view,MotionEvent.ACTION_UP,new int[]{21},new float[][]{{60,425}});assertEquals(0,NativeBridge.touchMask());
             view.cancel();
+            send(view,MotionEvent.ACTION_DOWN,new int[]{7},new float[][]{{view.controlX(2),view.controlY(2)}});assertEquals(128,NativeBridge.touchMask());
+            view.onWindowFocusChanged(false);assertEquals(0,NativeBridge.touchMask());
+            send(view,MotionEvent.ACTION_DOWN,new int[]{7},new float[][]{{view.controlX(1),view.controlY(1)}});assertEquals(64,NativeBridge.touchMask());
+            send(view,MotionEvent.ACTION_OUTSIDE,new int[]{7},new float[][]{{0,0}});assertEquals(0,NativeBridge.touchMask());
         });
     }
 }

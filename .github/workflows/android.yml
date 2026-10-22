@@ -50,12 +50,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y libsdl2-dev
           python3 tools/generate_android.py --rom "$SMB3_ROM_PATH"
-          cmake -S . -B build/verify -DCMAKE_BUILD_TYPE=Release -DSMB3_TEST_ROM="$SMB3_ROM_PATH" -DSMB3_CONTROLLER_TESTS=ON
+          cmake -S . -B build/verify -DCMAKE_BUILD_TYPE=Release -DSMB3_TEST_ROM="$SMB3_ROM_PATH" -DSMB3_CONTROLLER_TESTS=ON -DSMB3_FRONTEND_TESTS=ON -DSMB3_LLE_RENDER_SPANS=ON
           cmake --build build/verify --parallel 4
           ctest --test-dir build/verify --output-on-failure
           node --test tests/rom.test.mjs
           mkdir -p build/java-tests
-          javac -d build/java-tests android/app/src/main/java/org/mushroomrecompiled/TouchState.java android/app/src/main/java/org/mushroomrecompiled/RomValidator.java tests/android_host/TouchStateTest.java
+          javac -d build/java-tests android/app/src/main/java/org/mushroomrecompiled/TouchState.java android/app/src/main/java/org/mushroomrecompiled/TouchGeometry.java android/app/src/main/java/org/mushroomrecompiled/RomValidator.java tests/android_host/TouchStateTest.java
           java -cp build/java-tests org.mushroomrecompiled.TouchStateTest "$SMB3_ROM_PATH"
       - name: Cross-compile and sign ARM64 Release
         env:
@@ -65,7 +65,7 @@ jobs:
         run: |
           python3 tools/prepare_android.py
           cd android
-          ./gradlew --no-daemon -PandroidVersionCode="$((15000 + GITHUB_RUN_NUMBER))" :app:exportReleaseApk :app:assembleAndroidTest :app:lintRelease
+          ./gradlew --no-daemon -PandroidVersionCode="$((15002 + GITHUB_RUN_NUMBER))" :app:exportReleaseApk :app:assembleAndroidTest :app:lintRelease
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose ../build/android-release/MushroomRecompiled-Android-arm64.apk
       - uses: actions/upload-artifact@v4
         with:

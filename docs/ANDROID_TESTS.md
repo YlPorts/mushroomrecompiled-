@@ -4,11 +4,58 @@ Fecha: 22 de octubre de 2026. Entorno: Linux x86_64, GCC 14, JDK 17, SDK 36,
 NDK 28.2.13676358/Clang, CMake y Gradle 8.13. La ROM privada se validó con la
 identidad autorizada en [ANDROID.md](ANDROID.md). No se modificó.
 
-**No había un dispositivo Android conectado.** `adb devices` devolvió una lista
+**No había un dispositivo Android conectado a este entorno.** `adb devices` devolvió una lista
 vacía. Los resultados del núcleo en Linux no certifican la aplicación Android,
 el Galaxy A15, un modelo de mando ni reproducción audible sin cortes.
 
-## Resultados ejecutados
+## Revisión actual: `1.5.0-android.2`
+
+El usuario informó tirones incluso en 4:3 con el audio silenciado en la primera
+APK. Esta revisión separa el hilo del núcleo de EGL/vsync, optimiza la PPU LLE,
+renueva audio y controles y añade diagnóstico exportable. La guía de uso para
+las pruebas está en [ANDROID_PERFORMANCE.md](ANDROID_PERFORMANCE.md).
+
+| Comprobación nueva | Resultado ejecutado |
+|---|---|
+| Regresiones del núcleo, vídeo y audio | CTest 9/9; 483,54 s, incluidos los guiones originales de runtime, widescreen y escenas 4/6 |
+| PPU LLE: ruta general frente a tramos estables | Coinciden 1.800 hashes por modo en 4:3 y 16:9; cada hash cubre hardware, memoria, framebuffer completo y PCM |
+| Frontend nativo real en Linux, SDL headless | Dos sesiones dentro del mismo proceso: el núcleo avanza durante un bloqueo de presentación de 600 ms; pausa, cinco slots, cargar, reiniciar, cambio de formato y cierre pasaron |
+| Buzón entre hilos | Productor de 2.000 imágenes y consumidor lento: último cuadro completo, dimensiones coherentes, sin píxeles mezclados y cierre correcto |
+| FIFO de audio | Mono/estéreo, wrap de índices, cola acotada, faltas y fundidos pasaron |
+| Sanitizadores | ASan/UBSan pasaron en FIFO, buzón y frontend Linux con núcleo real; no equivalen a ejecutar Android |
+| Guardado anterior | Un snapshot de la compilación previa cargó en Linux y mantuvo continuación determinista |
+| Reinicios del núcleo | Tres arranques comparan estado y PCM; no se conserva audio del arranque anterior |
+| JVM de controles | IDs, A+B, soltado/cancelación, botones superpuestos, SELECT/START y captura extendida de cruceta pasaron |
+| Mandos SDL | Prueba virtual volvió a pasar; el acelerómetro está deshabilitado como joystick en Android |
+| Windows | Aplicación y verificador Win32 recompilados con LLVM-MinGW; no se ejecutaron en Windows |
+| Android | Release ARM64 y APK de instrumentación compiladas, `-O3`, LTO y PPU LLE verificados en las órdenes NDK; lint: 0 errores y 60 advertencias |
+| Paquete | Firma Release válida con el mismo certificado; `zipalign -c -P 16 4` y alineación ELF de 16 KiB pasaron; solo ARM64 |
+
+Las pruebas headless ejecutan el código C real del frontend y el juego. Usan los
+drivers de prueba de SDL, sin pantalla ni salida audible; esos drivers y el
+bloqueo artificial no están habilitados en la APK Android. La prueba MotionEvent
+se compiló, pero sigue pendiente ejecutarla en ARM64.
+
+Una medición consecutiva sin compilaciones simultáneas en este servidor compartido
+dio los siguientes tiempos. Son una muestra de rendimiento x86_64, no una medición
+del teléfono ni una promesa de 60 FPS. Los hashes finales de estado, imagen y
+audio coinciden con el binario anterior en ambos modos.
+
+| Trabajo por cuadro de juego | Anterior, GCC `-O3` | Actual, `-O3` + LTO + tramos LLE |
+|---|---:|---:|
+| Núcleo 4:3 | 11,874 ms | 10,530 ms |
+| Núcleo 16:9 | 16,058 ms | 10,788 ms |
+| Compositor 16:9 | 0,586 ms | 0,505 ms |
+
+APK actual: `MushroomRecompiled-Android-arm64.apk`, **6.374.819 bytes**,
+package `org.mushroomrecompiled`, versión `15002` / `1.5.0-android.2`.
+SHA-256:
+`2e2168f321b788c7bbafdc662d9951e1dd1b7656e713b3a92bfd48e31f8c873b`.
+No contiene `.nes`, código C privado generado ni keystore. Las bibliotecas
+compiladas sí contienen código derivado del juego, como requiere la recompilación.
+Conservar el mismo respaldo privado de firma de la entrega anterior.
+
+## Primera entrega: `1.5.0-android.1`
 
 | Prueba | Resultado |
 |---|---|
@@ -37,7 +84,7 @@ Se inspeccionaron capturas generadas por el núcleo real: mapa del mundo y nivel
 horizontal 1-1 ampliado a 426×240. Las capturas, ROM, snapshots y fuentes
 generados permanecen fuera de los archivos públicos.
 
-La APK entregada es `MushroomRecompiled-Android-arm64.apk`, de 6.399.875 bytes,
+La APK de la primera entrega fue `MushroomRecompiled-Android-arm64.apk`, de 6.399.875 bytes,
 package `org.mushroomrecompiled`, versión `1.5.0-android.1` / `15001`, SDK mínimo
 26 y objetivo 36. Contiene `libmain.so`, `libSDL2.so` y `libc++_shared.so`
 exclusivamente para `arm64-v8a`; se comprobó el JNI de inicio de sesión del
@@ -65,25 +112,26 @@ APIs obsoletas y recomendaciones de interfaz; no se han probado en dispositivo.
 | 9 | Saltos, carreras y vuelo | Guion A/B/derecha ejecutado; vuelo y respuesta física pendientes |
 | 10 | Enemigos y colisiones | Enemigos y estados comparados; validación manual de colisiones y todas las fases pendiente |
 | 11 | Sonido | Muestras reales no nulas y frecuencias correctas; escucha, latencia, Bluetooth y ausencia de cortes pendientes |
-| 12 | Pausa/reanudación | Integración SDL/Activity implementada; pendiente probar Home, bloqueo, permisos y cambio de app |
-| 13 | Guardar/cargar | Núcleo determinista; pendiente usar los cinco slots desde Android y comprobar persistencia tras cierre |
+| 12 | Pausa/reanudación | Frontend nativo probado en Linux; pendiente probar Activity, Home, bloqueo, permisos y cambio de app Android |
+| 13 | Guardar/cargar | Cinco slots y snapshot anterior probados en Linux; pendiente usarlos desde Android y comprobar persistencia tras cierre |
 | 14 | 4:3 | Núcleo original y cálculo de destino probados; pendiente presentación Android |
 | 15 | 16:9 | Regresiones originales pasaron; pendiente presentación y rendimiento Android |
 | 16 | Multitáctil | Lógica JVM pasó; prueba de MotionEvent y dedos físicos pendiente en ARM64 |
 | 17 | Mandos | Mando virtual SDL pasó; Bluetooth/USB/Xbox/PlayStation físicos pendientes |
-| 18 | Salir y reabrir | Persistencia SAF y preferencias implementadas; pendiente ciclo completo en Android |
+| 18 | Salir y reabrir | Dos sesiones del frontend y tres del núcleo pasaron en Linux; pendiente ciclo completo de Activity/SAF en Android |
 
 ## Reproducir las pruebas sin dispositivo
 
 ```sh
 export SMB3_ROM_PATH='/ruta/privada/compatible.nes'
 python3 tools/generate_android.py --rom "$SMB3_ROM_PATH"
-cmake -S . -B build/verify -DCMAKE_BUILD_TYPE=Release -DSMB3_TEST_ROM="$SMB3_ROM_PATH"
+cmake -S . -B build/verify -DCMAKE_BUILD_TYPE=Release -DSMB3_TEST_ROM="$SMB3_ROM_PATH" -DSMB3_LLE_RENDER_SPANS=ON
 cmake --build build/verify --parallel 4
 ctest --test-dir build/verify --output-on-failure
 npm test
 
-# Si SDL2 de desarrollo está instalado, añadir -DSMB3_CONTROLLER_TESTS=ON.
+# Con SDL2 de desarrollo y JDK instalados, añadir:
+# -DSMB3_CONTROLLER_TESTS=ON -DSMB3_FRONTEND_TESTS=ON
 # Solo validación/viewport, sin disponer de la ROM:
 cmake -S . -B build/platform -DSMB3_PLATFORM_TESTS_ONLY=ON
 cmake --build build/platform
@@ -91,6 +139,7 @@ ctest --test-dir build/platform --output-on-failure
 
 mkdir -p build/java-tests
 javac -d build/java-tests android/app/src/main/java/org/mushroomrecompiled/TouchState.java \
+  android/app/src/main/java/org/mushroomrecompiled/TouchGeometry.java \
   android/app/src/main/java/org/mushroomrecompiled/RomValidator.java tests/android_host/TouchStateTest.java
 java -cp build/java-tests org.mushroomrecompiled.TouchStateTest "$SMB3_ROM_PATH"
 ```

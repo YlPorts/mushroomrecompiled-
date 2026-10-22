@@ -50,17 +50,24 @@ Los mandos Android habituales no requieren permiso de archivos ni escaneo.
 El permiso de dispositivos cercanos para Bluetooth HID especializado puede
 habilitarse desde Controles, cuando el usuario lo necesita.
 
-El hilo SDL es el único que accede al núcleo. Las acciones JNI se ponen en una
-cola; los dedos y la pausa se comunican mediante atómicos. Se usa un renderer
+El hilo `NESRecomp` es el único que accede al núcleo. Las acciones JNI se ponen en una
+cola; los dedos y la pausa se comunican mediante atómicos. El hilo SDL presenta
+el último framebuffer completo mediante un buzón fijo protegido; la espera de
+EGL/vsync no bloquea los ciclos ni la producción de audio. Se usa un renderer
 SDL acelerado **OpenGL ES**, una textura ARGB8888 reutilizada y el framebuffer
 original. SDL abre el dispositivo de audio Android; mantiene la cadencia NTSC
 del runtime sin cambiar la velocidad para corregir el sonido.
-La presentación puede omitir cuadros atrasados mientras ejecuta todos sus ciclos
-y conserva todo su audio, con recuperación limitada a tres cuadros por turno.
+La presentación puede omitir imágenes atrasadas mientras el núcleo ejecuta todos
+sus cuadros y conserva su audio a la cadencia original.
 El diagnóstico distingue FPS del juego y FPS presentados.
 Hay volumen,
-mute, mono/estéreo dual mono, 44.1/48/96 kHz y reserva de 20–80 ms. Los contadores
-de audio y ejecución pueden consultarse en Información > Diagnóstico.
+mute, mono/estéreo dual mono, 44.1/48/96 kHz y reserva de 20–80 ms (24 ms por defecto).
+AAudio solicita baja latencia; OpenSL ES y AudioTrack sirven de alternativas.
+El callback usa un FIFO fijo y adapta la reserva mínima al bloque negociado.
+Los contadores
+de audio y ejecución pueden consultarse y exportarse en Rendimiento y pruebas.
+Consultar [ANDROID_PERFORMANCE.md](ANDROID_PERFORMANCE.md) para probar la revisión
+`.2`, los nuevos controles y las optimizaciones de la PPU LLE.
 
 ## Uso
 

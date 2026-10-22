@@ -34,16 +34,22 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class GameActivity extends SDLActivity implements TouchControlsView.Listener {
-    private static final int PICK_ROM=101;
+    private static final int PICK_ROM=101,EXPORT_REPORT=103;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private SharedPreferences preferences;
     private Settings settings;
     private TouchControlsView touch;
     private AlertDialog dialog;
-    private boolean menu=true,editing,loading,destroyed,initial=true,resumeAfterLoad;
+    private boolean menu=true,editing,testing,loading,destroyed,initial=true,resumeAfterLoad;
+    private TextView statsView;
+    private final String[] diagnosticHistory=new String[90];
+    private int diagnosticCount;
+    private long lastDiagnostic;
+    private String pendingReport="";
     private LinearLayout editorBar;
     private SeekBar sizeSlider;
+    private TextView editorSelection;
     private String selectedRom="";
     private int safeLeft,safeTop,safeRight;
     private final String[] actionNames={"B · correr / habilidad","A · saltar / volar","SELECT","START","Arriba","Abajo","Izquierda","Derecha","Turbo B","Turbo A","Menú"};
@@ -57,6 +63,10 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         touch=new TouchControlsView(this,settings,this);
         mLayout.addView(touch,new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+        statsView=MenuUi.text(this,"",11,0xfff1eee5,false);statsView.setPadding(MenuUi.dp(this,8),MenuUi.dp(this,4),MenuUi.dp(this,8),MenuUi.dp(this,4));
+        statsView.setBackground(MenuUi.background(this,0xb315171b,0,7));statsView.setClickable(false);statsView.setFocusable(false);statsView.setVisibility(View.GONE);
+        android.widget.RelativeLayout.LayoutParams statsParams=new android.widget.RelativeLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);
+        statsParams.setMargins(MenuUi.dp(this,12),MenuUi.dp(this,8),0,0);mLayout.addView(statsView,statsParams);
         touch.setOnApplyWindowInsetsListener((v,insets)->{
             int l,t,r,b;
             if(Build.VERSION.SDK_INT>=30){
@@ -71,6 +81,7 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
                 }
             }
             safeLeft=l;safeTop=t;safeRight=r;
+            android.widget.RelativeLayout.LayoutParams sp=(android.widget.RelativeLayout.LayoutParams)statsView.getLayoutParams();sp.leftMargin=l+MenuUi.dp(this,12);sp.topMargin=t+MenuUi.dp(this,8);statsView.setLayoutParams(sp);
             touch.safeArea(l,t,r,b);NativeBridge.safeArea(l,t,r,b,touch.getWidth(),touch.getHeight());
             if(editorBar!=null)editorBar.setPadding(16+l,4+t,16+r,4);return insets;
         });
@@ -82,11 +93,13 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
         if(!uri.isEmpty())importRom(Uri.parse(uri),true,false);
     }
     private void immersive(){
+        android.view.WindowManager.LayoutParams attributes=getWindow().getAttributes();attributes.preferredRefreshRate=60f;getWindow().setAttributes(attributes);
         if(Build.VERSION.SDK_INT>=30){
             getWindow().setDecorFitsSystemWindows(false);
             WindowInsetsController c=getWindow().getInsetsController();
             if(c!=null){c.hide(WindowInsets.Type.systemBars());c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);}
         }else getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        if(Build.VERSION.SDK_INT>=30&&mSurface!=null){android.view.Surface surface=mSurface.getHolder().getSurface();if(surface.isValid())surface.setFrameRate(60f,android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);}
     }
     @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus)immersive();}
     @Override protected void onPause(){
@@ -95,15 +108,18 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
     }
     @Override protected void onResume(){
         super.onResume();immersive();
-        if(settings!=null&&!initial){NativeBridge.setPaused(true);handler.post(()->{if(!loading&&!editing)showMain();});if(!loading&&!selectedRom.isEmpty())verifyRememberedAccess();}
+        if(settings!=null&&!initial){NativeBridge.setPaused(true);handler.post(()->{if(!loading&&!editing&&!testing)showMain();});if(!loading&&!selectedRom.isEmpty())verifyRememberedAccess();}
         initial=false;
     }
     @Override protected void onDestroy(){destroyed=true;handler.removeCallbacksAndMessages(null);if(touch!=null)touch.cancel();io.shutdownNow();super.onDestroy();}
     @android.annotation.SuppressLint("GestureBackNavigation") // API 33+ uses the callback registered in onCreate.
     @Override public void onBackPressed(){back();}
-    private void back(){if(editing){finishEditor();return;}if(dialog!=null){showMain();return;}menu();}
-    @Override public void menu(){if(editing){finishEditor();return;}pause();showMain();}
-    private void pause(){menu=true;touch.cancel();NativeBridge.setPaused(true);touch.mode(false,false);}
+    private void back(){if(testing){finishButtonTest();return;}if(editing){finishEditor();return;}if(dialog!=null){showMain();return;}menu();}
+    @Override public void menu(){if(testing){finishButtonTest();return;}if(editing){finishEditor();return;}pause();showMain();}
+    private void pause(){
+        if(testing||editing){if(testing){testing=false;touch.test(false);}if(editing){editing=false;touch.edit(false);settings.save();}if(editorBar!=null){mLayout.removeView(editorBar);editorBar=null;}}
+        menu=true;touch.cancel();NativeBridge.setPaused(true);touch.mode(false,false);if(statsView!=null)statsView.setVisibility(View.GONE);
+    }
     private boolean loaded(){return (NativeBridge.state()&NativeBridge.LOADED)!=0;}
     private void resume(){
         if(!loaded()){toast("Selecciona primero la ROM compatible.");showMain();return;}
@@ -112,29 +128,29 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
     private void dismiss(){if(dialog!=null){dialog.setOnCancelListener(null);dialog.dismiss();dialog=null;}}
     private void list(String title,String[] items,java.util.function.IntConsumer action,Runnable back){
         pause();dismiss();
-        dialog=new AlertDialog.Builder(this).setTitle(title).setItems(items,(d,n)->{dialog=null;action.accept(n);})
-            .setNegativeButton("Atrás",(d,n)->{dialog=null;back.run();}).create();
-        dialog.setOnCancelListener(d->{dialog=null;back.run();});dialog.show();
+        dialog=MenuUi.menu(this,title,"",items,null,false,-1,n->{dialog=null;action.accept(n);},()->{dialog=null;back.run();},true);
+        MenuUi.show(this,dialog,false);
     }
     private void showMain(){
-        if(destroyed||editing)return;
+        if(destroyed||editing||testing)return;
         pause();dismiss();
         final boolean ready=loaded();
-        String[] items=ready?new String[]{"Continuar","Reiniciar","Guardar estado · slot "+settings.slot,"Cargar estado · slot "+settings.slot,"Controles","Vídeo","Audio","Cambiar ROM","Información del proyecto","Salir"}
-            :new String[]{"Seleccionar ROM","Iniciar juego","Configuración","Información del proyecto","Salir"};
-        dialog=new AlertDialog.Builder(this).setTitle("🍄 Mushroom Recompiled · 1.5.0")
-            .setItems(items,(d,n)->{dialog=null;
+        String[] items=ready?new String[]{"Continuar","Guardar estado","Cargar estado","Controles","Vídeo","Audio","Rendimiento y pruebas","Reiniciar","Cambiar ROM","Salir"}
+            :new String[]{"Seleccionar ROM","Iniciar juego","Configuración","Rendimiento y pruebas","Información","Salir"};
+        String[] details=ready?new String[]{"Volver a la partida","Elegir entre 5 slots","Recuperar una partida","Tacto y mandos","Formato y escalado","Volumen y latencia","FPS, botones e informes","Comenzar de nuevo","Documento original","Cerrar la aplicación"}
+            :new String[]{"Archivo .nes original",loading?"Validando documento…":"Continuar con tu ROM","Controles, vídeo y audio","Comprobar esta versión","Créditos y licencias","Cerrar la aplicación"};
+        dialog=MenuUi.menu(this,"Mushroom Recompiled",ready?"PARTIDA EN PAUSA":loading?"Preparando tu ROM…":"Tu juego de siempre. En tu móvil.",items,details,true,ready?0:1,n->{dialog=null;
                 if(ready){
-                    switch(n){case 0:resume();break;case 1:restart();break;case 2:slots(true);break;case 3:slots(false);break;case 4:controls();break;case 5:video();break;case 6:audio();break;case 7:pickRom();break;case 8:about();break;case 9:quit();break;}
-                }else switch(n){case 0:pickRom();break;case 1:if(loading){resumeAfterLoad=true;toast("Validando ROM…");showMain();}else if(!selectedRom.isEmpty()){resumeAfterLoad=true;send(NativeBridge.LOAD_ROM,selectedRom,0);}else{toast("Selecciona la ROM para iniciar.");pickRom();}break;case 2:configuration();break;case 3:about();break;case 4:quit();break;}
-            }).create();
-        dialog.setOnCancelListener(d->{dialog=null;if(loaded())resume();else showMain();});dialog.show();
+                    switch(n){case 0:resume();break;case 1:slots(true);break;case 2:slots(false);break;case 3:controls();break;case 4:video();break;case 5:audio();break;case 6:performance();break;case 7:restart();break;case 8:pickRom();break;case 9:quit();break;}
+                }else switch(n){case 0:pickRom();break;case 1:if(loading){resumeAfterLoad=true;toast("Validando ROM…");showMain();}else if(!selectedRom.isEmpty()){resumeAfterLoad=true;send(NativeBridge.LOAD_ROM,selectedRom,0);}else{toast("Selecciona la ROM para iniciar.");pickRom();}break;case 2:configuration();break;case 3:performance();break;case 4:about();break;case 5:quit();break;}
+            },()->{dialog=null;if(loaded())resume();else showMain();},false);
+        MenuUi.show(this,dialog,true);
     }
-    private void configuration(){list("Configuración",new String[]{"Controles","Vídeo","Audio"},n->{if(n==0)controls();else if(n==1)video();else audio();},this::showMain);}
-    private void restart(){pause();dismiss();dialog=new AlertDialog.Builder(this).setTitle("Reiniciar partida")
+    private void configuration(){list("Configuración",new String[]{"Controles","Vídeo","Audio","Rendimiento y pruebas","Información del proyecto"},n->{if(n==0)controls();else if(n==1)video();else if(n==2)audio();else if(n==3)performance();else about();},this::showMain);}
+    private void restart(){pause();dismiss();dialog=MenuUi.builder(this).setTitle("Reiniciar partida")
         .setMessage("Se perderá el progreso desde el último estado guardado.")
         .setPositiveButton("Reiniciar",(d,n)->{send(NativeBridge.RESET,"",0);resume();})
-        .setNegativeButton("Cancelar",(d,n)->showMain()).create();dialog.setOnCancelListener(d->showMain());dialog.show();}
+        .setNegativeButton("Cancelar",(d,n)->showMain()).create();dialog.setOnCancelListener(d->showMain());MenuUi.show(this,dialog,false);}
     private void quit(){pause();dismiss();send(NativeBridge.QUIT,"",0);destroyed=true;handler.removeCallbacksAndMessages(null);io.shutdownNow();finish();}
     private File slotFile(int n){return new File(getFilesDir(),"slot-"+n+".state");}
     private void slots(boolean save){
@@ -144,9 +160,9 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
             settings.slot=n+1;settings.save();
             if(!save&&!slotFile(n+1).exists()){toast("Este slot está vacío.");slots(false);return;}
             if(save&&slotFile(n+1).exists()){
-                dialog=new AlertDialog.Builder(this).setTitle("Sobrescribir slot "+(n+1)+"?")
+                dialog=MenuUi.builder(this).setTitle("Sobrescribir slot "+(n+1)+"?")
                     .setPositiveButton("Guardar",(d,b)->{send(NativeBridge.SAVE,slotFile(n+1).getAbsolutePath(),n+1);showMain();})
-                    .setNegativeButton("Cancelar",(d,b)->slots(true)).create();dialog.setOnCancelListener(d->slots(true));dialog.show();
+                    .setNegativeButton("Cancelar",(d,b)->slots(true)).create();dialog.setOnCancelListener(d->slots(true));MenuUi.show(this,dialog,false);
             }else{send(save?NativeBridge.SAVE:NativeBridge.LOAD_STATE,slotFile(n+1).getAbsolutePath(),n+1);showMain();}
         },this::showMain);
     }
@@ -159,6 +175,12 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
+        if(request==EXPORT_REPORT){
+            if(result==RESULT_OK&&data!=null&&data.getData()!=null){Uri uri=data.getData();String report=pendingReport;io.execute(()->{
+                try(java.io.OutputStream stream=getContentResolver().openOutputStream(uri,"wt")){if(stream==null)throw new java.io.IOException("No se pudo abrir el documento.");stream.write(report.getBytes(StandardCharsets.UTF_8));handler.post(()->toast("Informe guardado."));}
+                catch(Exception e){handler.post(()->toast("No se pudo guardar el informe: "+e.getMessage()));}
+            });}performance();return;
+        }
         if(request!=PICK_ROM)return;
         if(result==RESULT_OK&&data!=null&&data.getData()!=null){
             Uri uri=data.getData();
@@ -188,10 +210,10 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
                 handler.post(()->{
                     if(destroyed)return;loading=false;resumeAfterLoad=false;
                     if(restore){selectedRom="";preferences.edit().remove("romUri").apply();}
-                    dismiss();dialog=new AlertDialog.Builder(this).setTitle(restore?"Selecciona la ROM nuevamente":"ROM no compatible")
+                    dismiss();dialog=MenuUi.builder(this).setTitle(restore?"Selecciona la ROM nuevamente":"ROM no compatible")
                         .setMessage((restore?"El archivo recordado no está disponible o no es compatible.\n\n":"")+e.getMessage())
                         .setPositiveButton("Seleccionar ROM",(d,n)->pickRom()).setNegativeButton("Volver",(d,n)->showMain()).create();
-                    dialog.setOnCancelListener(d->showMain());dialog.show();
+                    dialog.setOnCancelListener(d->showMain());MenuUi.show(this,dialog,false);
                 });
             }
         });
@@ -202,22 +224,22 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
             try(InputStream stream=getContentResolver().openInputStream(Uri.parse(remembered))){RomValidator.read(stream);}
             catch(Exception e){handler.post(()->{
                 if(destroyed||!remembered.equals(preferences.getString("romUri","")))return;
-                pause();dismiss();dialog=new AlertDialog.Builder(this).setTitle("ROM no disponible")
+                pause();dismiss();dialog=MenuUi.builder(this).setTitle("ROM no disponible")
                     .setMessage("El documento recordado ha desaparecido, cambió o perdió el permiso. Selecciónalo nuevamente para conservar el acceso.")
                     .setPositiveButton("Seleccionar ROM",(d,n)->pickRom()).setNegativeButton("Volver",(d,n)->showMain()).create();
-                dialog.setOnCancelListener(d->showMain());dialog.show();
+                dialog.setOnCancelListener(d->showMain());MenuUi.show(this,dialog,false);
             });}
         });
     }
     private void choice(String title,String[] options,int current,java.util.function.IntConsumer selected,Runnable back){
-        pause();dismiss();dialog=new AlertDialog.Builder(this).setTitle(title).setSingleChoiceItems(options,current,(d,n)->{selected.accept(n);settings.apply();back.run();})
-            .setNegativeButton("Atrás",(d,n)->back.run()).create();dialog.setOnCancelListener(d->back.run());dialog.show();
+        pause();dismiss();dialog=MenuUi.builder(this).setTitle(title).setSingleChoiceItems(options,current,(d,n)->{selected.accept(n);settings.apply();back.run();})
+            .setNegativeButton("Atrás",(d,n)->back.run()).create();dialog.setOnCancelListener(d->back.run());MenuUi.show(this,dialog,false);
     }
     private void slider(String title,int min,int max,int value,java.util.function.IntConsumer selected,Runnable back){
         pause();dismiss();LinearLayout box=column();TextView text=label(title+": "+value);SeekBar bar=new SeekBar(this);bar.setMax(max-min);bar.setProgress(value-min);box.addView(text);box.addView(bar);
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int n,boolean fromUser){text.setText(title+": "+(n+min));}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});
-        dialog=new AlertDialog.Builder(this).setTitle(title).setView(box).setPositiveButton("Aplicar",(d,n)->{selected.accept(bar.getProgress()+min);settings.apply();touch.changed();back.run();})
-            .setNegativeButton("Cancelar",(d,n)->back.run()).create();dialog.setOnCancelListener(d->back.run());dialog.show();
+        dialog=MenuUi.builder(this).setTitle(title).setView(box).setPositiveButton("Aplicar",(d,n)->{selected.accept(bar.getProgress()+min);settings.apply();touch.changed();back.run();})
+            .setNegativeButton("Cancelar",(d,n)->back.run()).create();dialog.setOnCancelListener(d->back.run());MenuUi.show(this,dialog,false);
     }
     private void video(){
         String[] ratios={"4:3 original","16:9 ampliado"},scales={"Ajustar con bandas","Escalado entero","Pixel perfect (píxeles cuadrados)"};
@@ -235,7 +257,8 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
             case 1:settings.videoAudio[9]^=1;settings.apply();audio();break;
             case 2:choice("Frecuencia",new String[]{"44100 Hz","48000 Hz","96000 Hz"},settings.videoAudio[4]==44100?0:settings.videoAudio[4]==48000?1:2,v->settings.videoAudio[4]=new int[]{44100,48000,96000}[v],this::audio);break;
             case 3:choice("Canales",new String[]{"Mono","Estéreo (NES dual mono)"},settings.videoAudio[5],v->settings.videoAudio[5]=v,this::audio);break;
-            case 4:choice("Reserva de audio",new String[]{"20 ms","40 ms","60 ms","80 ms"},settings.videoAudio[6]/20-1,v->settings.videoAudio[6]=(v+1)*20,this::audio);break;}
+            case 4:int[] buffers={20,24,32,48,64,80};int selected=0;for(int i=0;i<buffers.length;i++)if(buffers[i]==settings.videoAudio[6])selected=i;
+                choice("Reserva de audio",new String[]{"20 ms · mínima","24 ms · recomendada","32 ms","48 ms · más estable","64 ms","80 ms"},selected,v->settings.videoAudio[6]=buffers[v],this::audio);break;}
         },this::showMain);
     }
     private void controls(){
@@ -243,7 +266,7 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
             switch(n){case 0:startEditor();break;case 1:slider("Opacidad (%)",10,100,settings.opacity,v->settings.opacity=v,this::controls);break;
             case 2:settings.hideWithController=!settings.hideWithController;settings.save();controls();break;case 3:bindings();break;
             case 4:slider("Zona muerta (%)",5,80,settings.deadzone,v->settings.deadzone=v,this::controls);break;
-            case 5:float[] x={.12f,.86f,.94f,.46f,.54f,.95f},y={.73f,.79f,.63f,.96f,.96f,.08f};System.arraycopy(x,0,settings.x,0,6);System.arraycopy(y,0,settings.y,0,6);Arrays.fill(settings.size,1f);Arrays.fill(settings.buttons,-1);settings.opacity=50;settings.deadzone=25;settings.device="";settings.reserveControls=true;settings.hideWithController=true;settings.apply();touch.changed();controls();break;
+            case 5:System.arraycopy(Settings.DEFAULT_X,0,settings.x,0,6);System.arraycopy(Settings.DEFAULT_Y,0,settings.y,0,6);Arrays.fill(settings.size,1f);Arrays.fill(settings.buttons,-1);settings.opacity=65;settings.deadzone=25;settings.device="";settings.reserveControls=true;settings.hideWithController=true;settings.apply();touch.changed();controls();break;
             case 6:if(Build.VERSION.SDK_INT>=31&&checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)!=android.content.pm.PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{android.Manifest.permission.BLUETOOTH_CONNECT},102);}else{toast("Acceso disponible. Empareja tu mando desde los ajustes Bluetooth de Android.");controls();}break;
             case 7:controllerDevices();break;case 8:settings.reserveControls=!settings.reserveControls;settings.save();controls();break;}
         },this::showMain);
@@ -268,23 +291,58 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
         list("Mando "+((NativeBridge.state()&NativeBridge.CONTROLLER)!=0?"conectado":"desconectado"),names,n->{
             if(n==11){Arrays.fill(settings.buttons,-1);settings.apply();bindings();return;}
             if((NativeBridge.state()&NativeBridge.CONTROLLER)==0){toast("Conecta un mando Bluetooth o USB para reasignar.");bindings();return;}
-            dismiss();dialog=new AlertDialog.Builder(this).setTitle(actionNames[n]).setMessage("Suelta los botones y pulsa el botón físico que quieras asignar.")
+            dismiss();dialog=MenuUi.builder(this).setTitle(actionNames[n]).setMessage("Suelta los botones y pulsa el botón físico que quieras asignar.")
                 .setNeutralButton("Automático",(d,b)->{send(NativeBridge.CAPTURE,"",-1);settings.buttons[n]=-1;settings.apply();bindings();})
                 .setNegativeButton("Cancelar",(d,b)->{send(NativeBridge.CAPTURE,"",-1);bindings();}).create();
-            dialog.setOnCancelListener(d->{send(NativeBridge.CAPTURE,"",-1);bindings();});dialog.show();send(NativeBridge.CAPTURE,"",n);
+            dialog.setOnCancelListener(d->{send(NativeBridge.CAPTURE,"",-1);bindings();});MenuUi.show(this,dialog,false);send(NativeBridge.CAPTURE,"",n);
         },this::controls);
     }
     private void startEditor(){
         pause();dismiss();editing=true;touch.edit(true);
         editorBar=new LinearLayout(this);editorBar.setGravity(Gravity.CENTER);editorBar.setPadding(16+safeLeft,4+safeTop,16+safeRight,4);editorBar.setBackgroundColor(0xcc101116);
-        TextView label=label("Tamaño");editorBar.addView(label);
-        sizeSlider=new SeekBar(this);sizeSlider.setMax(150);sizeSlider.setProgress(50);editorBar.addView(sizeSlider,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));
+        editorSelection=label("Selecciona un control");editorSelection.setTextSize(12);editorBar.addView(editorSelection);
+        sizeSlider=new SeekBar(this);sizeSlider.setMax(150);sizeSlider.setProgress(50);sizeSlider.setEnabled(false);editorBar.addView(sizeSlider,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.WRAP_CONTENT,1));
         sizeSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int p,boolean user){if(user)touch.resizeSelected(.5f+p/100f);}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});
         Button done=new Button(this);done.setText("Guardar");done.setOnClickListener(v->finishEditor());editorBar.addView(done);
         android.widget.RelativeLayout.LayoutParams params=new android.widget.RelativeLayout.LayoutParams(Math.round(touch.getWidth()*.6f),ViewGroup.LayoutParams.WRAP_CONTENT);params.addRule(android.widget.RelativeLayout.ALIGN_PARENT_TOP);params.addRule(android.widget.RelativeLayout.CENTER_HORIZONTAL);mLayout.addView(editorBar,params);
     }
-    @Override public void edited(int selected){if(sizeSlider!=null)sizeSlider.setProgress(Math.round((settings.size[selected]-.5f)*100));}
+    @Override public void edited(int selected){if(sizeSlider!=null){sizeSlider.setEnabled(true);sizeSlider.setProgress(Math.round((settings.size[selected]-.5f)*100));if(editorSelection!=null)editorSelection.setText(new String[]{"Cruceta","B","A","SELECT","START","Menú"}[selected]+" · tamaño");}}
     private void finishEditor(){editing=false;touch.edit(false);settings.save();if(editorBar!=null){mLayout.removeView(editorBar);editorBar=null;}controls();}
+    private void performance(){
+        list("Rendimiento y pruebas",new String[]{"Mostrar FPS y tiempos · "+(settings.showStats?"activado":"desactivado"),"Aplicar ajustes recomendados · 4:3, 48 kHz y 24 ms","Probar botones táctiles","Ver informe de esta sesión","Guardar informe .txt","Información del proyecto"},n->{
+            switch(n){
+            case 0:settings.showStats=!settings.showStats;settings.save();performance();break;
+            case 1:settings.videoAudio[0]=0;settings.videoAudio[2]=0;settings.videoAudio[4]=48000;settings.videoAudio[5]=1;settings.videoAudio[6]=24;settings.videoAudio[7]=100;settings.videoAudio[8]=0;settings.showStats=true;settings.apply();toast("Ajustes aplicados. Puedes volver a activar 16:9 desde Vídeo.");performance();break;
+            case 2:startButtonTest();break;
+            case 3:message("Informe de esta sesión",buildReport(),this::performance);break;
+            case 4:pendingReport=buildReport();Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/plain").addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"Mushroom-prueba-"+System.currentTimeMillis()+".txt");
+                try{startActivityForResult(intent,EXPORT_REPORT);}catch(android.content.ActivityNotFoundException e){toast("No hay un selector de documentos disponible.");performance();}break;
+            case 5:about();break;
+            }
+        },this::showMain);
+    }
+    private void startButtonTest(){
+        pause();dismiss();testing=true;touch.test(true);touch.mode(true,false);
+        editorBar=new LinearLayout(this);editorBar.setGravity(Gravity.CENTER);editorBar.setBackground(MenuUi.background(this,0xe624272f,0,10));
+        TextView title=MenuUi.text(this,"Comprueba que todo se suelta al levantar los dedos",13,MenuUi.INK,false);title.setPadding(16,8,16,8);editorBar.addView(title);
+        Button done=new Button(this);done.setText("Listo");done.setOnClickListener(v->finishButtonTest());editorBar.addView(done);
+        android.widget.RelativeLayout.LayoutParams p=new android.widget.RelativeLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,ViewGroup.LayoutParams.WRAP_CONTENT);p.addRule(android.widget.RelativeLayout.ALIGN_PARENT_TOP);p.addRule(android.widget.RelativeLayout.CENTER_HORIZONTAL);p.topMargin=safeTop;mLayout.addView(editorBar,p);
+    }
+    private void finishButtonTest(){testing=false;touch.test(false);touch.mode(false,false);if(editorBar!=null){mLayout.removeView(editorBar);editorBar=null;}performance();}
+    private String buildReport(){
+        String version="";try{version=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(android.content.pm.PackageManager.NameNotFoundException ignored){}
+        StringBuilder out=new StringBuilder("Mushroom Recompiled · informe de pruebas\n");
+        out.append("Versión: ").append(version).append("\nDispositivo: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
+            .append("\nAndroid: ").append(Build.VERSION.RELEASE).append(" (SDK ").append(Build.VERSION.SDK_INT).append(")\n")
+            .append("Vídeo: ").append(settings.videoAudio[0]==1?"16:9":"4:3").append(" | escala ").append(settings.videoAudio[1]).append(" | filtro ").append(settings.videoAudio[2])
+            .append("\nAudio solicitado: ").append(settings.videoAudio[4]).append(" Hz | reserva ").append(settings.videoAudio[6]).append(" ms\n")
+            .append("Mando: ").append((NativeBridge.state()&NativeBridge.CONTROLLER)!=0?"conectado":"no conectado")
+            .append("\n\nÚltima medición:\n").append(NativeBridge.diagnostics()).append("\n\nHistorial (solo durante el juego):\n");
+        int count=Math.min(diagnosticCount,diagnosticHistory.length);
+        for(int i=diagnosticCount-count;i<diagnosticCount;i++)out.append(diagnosticHistory[i%diagnosticHistory.length]).append("\n\n");
+        if(count==0)out.append("Juega unos segundos para registrar datos.\n");
+        return out.append("\nAnota: escena/nivel, tipo de salida de audio, tirones, botones y pasos para repetir el fallo.\n").toString();
+    }
     private void about(){
         list("Mushroom Recompiled · Proyecto",new String[]{"Acerca del port","Licencias y créditos","Diagnóstico de ejecución"},n->{
             if(n==0)message("Acerca del proyecto","Mushroom Recompiled 1.5.0\nPort Android ARM64 del núcleo NESRecomp por ciclos.\n\nJuego no oficial. Nintendo conserva los derechos de Super Mario Bros. 3. ROM aportada por el usuario, sin modificar.\n\n16:9 usa el compositor y los enemigos panorámicos de PC; las escenas no compatibles mantienen su encuadre. 19:9 no está disponible.\n\nProyecto original y port de PC: Adoregabriel2005 / Underplay.\nFork Android: YlPorts.\nNESRecomp: Matthew Stanley.\nBeta testers: ALEISTECH y RETROCESSO.",this::about);
@@ -303,16 +361,18 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
             android.widget.ImageView image=new android.widget.ImageView(this);image.setImageDrawable(android.graphics.drawable.Drawable.createFromStream(stream,"Underplay"));image.setAdjustViewBounds(true);image.setContentDescription("Powered by Underplay");box.addView(image);
         }catch(java.io.IOException e){toast("No se pudo abrir la identidad Underplay.");}
         scroll.addView(box);
-        dialog=new AlertDialog.Builder(this).setTitle(title).setView(scroll).setPositiveButton("Volver",(d,n)->back.run()).create();dialog.setOnCancelListener(d->back.run());dialog.show();
+        dialog=MenuUi.builder(this).setTitle(title).setView(scroll).setPositiveButton("Volver",(d,n)->back.run()).create();dialog.setOnCancelListener(d->back.run());MenuUi.show(this,dialog,false);
     }
     private LinearLayout column(){LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(28,16,28,16);return box;}
     private TextView label(String text){TextView label=new TextView(this);label.setText(text);label.setTextSize(16);label.setPadding(8,8,8,8);return label;}
     private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
     private void send(int operation,String path,int slot){if(!NativeBridge.command(operation,path,slot))toast("No se pudo enviar la operación al juego. Vuelve a intentarlo.");}
     private void updateTouchMode(){
+        if(editing||testing)return;
         boolean controller=(NativeBridge.state()&NativeBridge.CONTROLLER)!=0;
         touch.mode(!menu,controller);
         NativeBridge.setControlGutter(!menu&&settings.reserveControls&&!(controller&&settings.hideWithController)?16:0);
+        statsView.setVisibility(settings.showStats&&!menu?View.VISIBLE:View.GONE);
     }
     private final Runnable poll=new Runnable(){@Override public void run(){
         if(destroyed)return;
@@ -327,6 +387,11 @@ public final class GameActivity extends SDLActivity implements TouchControlsView
             if(result.startsWith("ROM cargada")){if(resumeAfterLoad){resumeAfterLoad=false;resume();}else if(menu)showMain();}
         }
         updateTouchMode();
+        long now=android.os.SystemClock.elapsedRealtime();
+        if(!menu&&!editing&&!testing&&loaded()&&now-lastDiagnostic>=1000){
+            lastDiagnostic=now;String sample=NativeBridge.diagnostics();diagnosticHistory[diagnosticCount++%diagnosticHistory.length]=sample;
+            String[] lines=sample.split("\n");statsView.setText(lines[0]+(lines.length>1?"\n"+lines[1]:""));
+        }
         handler.postDelayed(this,100);
     }};
 }

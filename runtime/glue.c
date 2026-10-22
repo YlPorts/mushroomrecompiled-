@@ -81,15 +81,20 @@ void glue_reset(void) {
     frames=0; pad1=0; cyc_set_controller(0,0); cyc_set_controller(1,0);
     smb3_wide_reset();
     smb3_enemies_reset();
-    hw_observe_line=8;
-    cyc_run_observer=smb3_wide_capture;
+    hw_observe_line=widescreen?8:-1;
+    cyc_run_observer=widescreen?smb3_wide_capture:NULL;
 }
 void glue_step_frame(void) { if (loaded) { smb3_enemies_tick();cyc_run_frame(); frames++; } }
 void glue_set_pad1(uint8_t p) { pad1=p; cyc_set_controller(0,p); }
 void glue_set_pad2(uint8_t p) { cyc_set_controller(1,p); }
 uint8_t glue_get_pad1(void) { return pad1; }
 const uint32_t *glue_get_framebuffer(void) { return cyc_frame_argb(); }
-void glue_set_widescreen(bool enabled) { widescreen=enabled;smb3_enemies_enable(enabled); }
+void glue_set_widescreen(bool enabled) {
+    if(widescreen!=enabled)smb3_wide_reset();
+    widescreen=enabled;smb3_enemies_enable(enabled);
+    hw_observe_line=enabled?8:-1;
+    cyc_run_observer=enabled?smb3_wide_capture:NULL;
+}
 const uint32_t *glue_get_present_framebuffer(int *width,int *height) {
     *width=widescreen?SMB3_WIDE_WIDTH:256;*height=240;
     return widescreen?smb3_wide_present(cyc_frame_argb()):cyc_frame_argb();
@@ -134,7 +139,7 @@ static bool load_state_file(FILE *f) {
     bool ok=fread(data,1,(size_t)n,f)==(size_t)n; fclose(f);
     char error[256];
     if (ok) ok=cyc_state_load(data,(size_t)n,error,sizeof error);
-    if (ok) {smb3_wide_reset();smb3_enemies_reset();glue_set_pad1(0);glue_set_pad2(0);}
+    if (ok) {smb3_wide_reset();smb3_enemies_reset();glue_set_pad1(0);glue_set_pad2(0);cyc_audio_enable(sample_rate);}
     free(data); return ok;
 }
 bool glue_save_state(const wchar_t *path) { return loaded && path && save_state_file(open_wide(path,true)); }

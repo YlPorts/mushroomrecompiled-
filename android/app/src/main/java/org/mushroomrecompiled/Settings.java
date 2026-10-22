@@ -3,14 +3,16 @@ package org.mushroomrecompiled;
 import android.content.SharedPreferences;
 
 final class Settings {
-    final int[] videoAudio={1,0,0,100,48000,1,40,100,0,0};
+    final int[] videoAudio={0,0,0,100,48000,1,24,100,0,0};
     final int[] buttons={-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
-    int deadzone=25,slot=1,opacity=50;
+    int deadzone=25,slot=1,opacity=65;
+    boolean showStats=true;
     boolean hideWithController=true;
     boolean reserveControls=true;
     String device="";
-    final float[] x={.12f,.86f,.94f,.46f,.54f,.95f};
-    final float[] y={.73f,.79f,.63f,.96f,.96f,.08f};
+    static final float[] DEFAULT_X={.12f,.84f,.94f,.44f,.56f,.95f};
+    static final float[] DEFAULT_Y={.73f,.81f,.64f,.94f,.94f,.08f};
+    final float[] x=DEFAULT_X.clone(),y=DEFAULT_Y.clone();
     final float[] size={1f,1f,1f,1f,1f,1f};
     private final SharedPreferences prefs;
     Settings(SharedPreferences prefs) {
@@ -23,9 +25,17 @@ final class Settings {
             size[i]=clamp(prefs.getFloat("touchSize"+i,size[i]),.5f,2f);
         }
         deadzone=prefs.getInt("deadzone",25);slot=prefs.getInt("slot",1);
-        opacity=prefs.getInt("opacity",50);hideWithController=prefs.getBoolean("hideWithController",true);
+        opacity=prefs.getInt("opacity",65);hideWithController=prefs.getBoolean("hideWithController",true);
+        showStats=prefs.getBoolean("showStats",true);
         reserveControls=prefs.getBoolean("reserveControls",true);
         device=prefs.getString("controller","");
+        // Earlier default buffers can be reduced once; explicit larger buffers remain.
+        if(!prefs.getBoolean("audioLatencyV2",false)){
+            if(videoAudio[6]==40)videoAudio[6]=24;
+            prefs.edit().putBoolean("audioLatencyV2",true).apply();
+        }
+        videoAudio[0]=videoAudio[0]==1?1:0;videoAudio[1]=Math.max(0,Math.min(2,videoAudio[1]));
+        slot=Math.max(1,Math.min(5,slot));opacity=Math.max(10,Math.min(100,opacity));
     }
     static float clamp(float n,float lo,float hi){return Math.max(lo,Math.min(hi,n));}
     void save() {
@@ -34,7 +44,7 @@ final class Settings {
         for(int i=0;i<buttons.length;i++)e.putInt("button"+i,buttons[i]);
         for(int i=0;i<x.length;i++){e.putFloat("touchX"+i,x[i]);e.putFloat("touchY"+i,y[i]);e.putFloat("touchSize"+i,size[i]);}
         e.putInt("deadzone",deadzone).putInt("slot",slot).putInt("opacity",opacity)
-            .putBoolean("hideWithController",hideWithController).putBoolean("reserveControls",reserveControls).putString("controller",device).apply();
+            .putBoolean("hideWithController",hideWithController).putBoolean("reserveControls",reserveControls).putBoolean("showStats",showStats).putString("controller",device).apply();
     }
     void apply(){save();NativeBridge.configure(videoAudio,buttons,deadzone,device);}
 }

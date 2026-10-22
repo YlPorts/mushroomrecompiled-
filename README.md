@@ -7,7 +7,10 @@
 Native Android frontend with SDL2/OpenGL ES, the original cycle-accurate core,
 SAF ROM selection, multitouch controls, controller remapping, five save slots,
 NES audio and the existing 16:9 compositor. See [Android build and usage](docs/ANDROID.md)
-and [verification status](docs/ANDROID_TESTS.md). Android hardware validation and
+and [verification status](docs/ANDROID_TESTS.md). Revision `.2` adds independent
+game/video threads, low-latency audio, LLE PPU optimizations and redesigned touch
+controls/menus; see the [mobile test guide](docs/ANDROID_PERFORMANCE.md).
+Android hardware validation and
 Galaxy A15 performance certification remain pending; 19:9 is not enabled.
 
 ## Widescreen and scene fixes — v1.5
